@@ -19,10 +19,10 @@
     implicit none
 
     open(100, file = 'Input\Param.txt')
-    open(101, file = 'Input\BC_.txt')
+    open(101, file = 'Input\BC_rev.txt')
     open(1022, file = 'Input\lq.txt')
     open(1023, file = 'Input\ly.txt')
-    open(601, file = 'Input\wt_.txt')
+    open(601, file = 'Input\wt.txt')
     
     read(100,*)
     read(100,*) segs, stressperiods, delt, drain_coeff, exp_coeff, depth_to_drain, transport_flag
@@ -76,7 +76,6 @@
 2894 continue 
      
     allocate(Q_up(segs,stressperiods))
-    !allocate(Q_upbase(segs,stressperiods))
     allocate(y_down(segs,stressperiods))
     allocate(IC_Q(segs,maxval(N)))
     allocate(IC_y(segs,maxval(N)))
@@ -84,7 +83,6 @@
         read(1022,*) IC_Q(jj,1:N(jj))
         read(1023,*) IC_y(jj,1:N(jj))
         read(101,*) Q_up(jj,:)
-        !read(666,*) Q_upbase(jj,1:stressperiods)
     end do    
     
     Q(:,:,1) = IC_Q(:,:)
@@ -107,11 +105,6 @@
     
         k= 0.0
         loop_count = -1
-        if (days.eq.1) then
-            iii = 900.0
-        else
-            iii = 900.0
-        end if
         
         do while (k.lt.iii)
             
@@ -127,22 +120,18 @@
                 tol_trib(jj) = abs(0.01*Q(jj,N(jj),1)) ! use to be 0.005
             end do
             
+            ! Courant-Freidrich-Lewy condition            
             delt1 = (6000.0/segs)*delx(1)/(Q(1,maxval(N)-5,1)/((D(1)*D(1)/4)*(acos(1 - 2*y(1,maxval(N)-5,1)/D(1)) -&
                 sin(acos(1 - 2*y(1,maxval(N)-5,1)/D(1)))*cos(acos(1 - 2*y(1,maxval(N)-5,1)/D(1))))))
             delt = delt1
-            !print*, delt, y(1,maxval(N)-5,1), Q(1,maxval(N)-5,1)
             tol_y(:) = 0.01
             tol_Q(:) = 0.01
 
-2893 continue             
-
-            !converge = 1
+2893        continue             
+            
             converge = segs
             iter_count = 0
-            
-            !do while (converge.lt.(segs+1))
             do while (converge.gt.0)
-                !print*,'SP: ', days, 'TS: ', k, 'seg ', converge
                 
                 if (iter_count.gt.30) then
                     if (delt.gt.(0.01)) then
@@ -179,17 +168,13 @@
 
                 ! read in drain flow ql - dim(1)
                 wt(:) = wt_day(converge,:)
-
-                ! initial guess
-                !guessQ = Q(converge,:,1)
-                !guessy = y(converge,:,1)
               
                 if (k.eq.(0.0)) then
-                guessQ = Q(converge,:,1) - Qlast(converge,:) + Q(converge,:,1)
-                guessy = y(converge,:,1) - ylast(converge,:) + y(converge,:,1)
+                    guessQ = Q(converge,:,1) - Qlast(converge,:) + Q(converge,:,1)
+                    guessy = y(converge,:,1) - ylast(converge,:) + y(converge,:,1)
                 else
-                guessQ = ((Q(converge,:,1) - Qlast(converge,:))/olddelt)*delt + Q(converge,:,1)
-                guessy = ((y(converge,:,1) - ylast(converge,:))/olddelt)*delt + y(converge,:,1)
+                    guessQ = ((Q(converge,:,1) - Qlast(converge,:))/olddelt)*delt + Q(converge,:,1)
+                    guessy = ((y(converge,:,1) - ylast(converge,:))/olddelt)*delt + y(converge,:,1)
                 end if
          
                 
@@ -199,7 +184,6 @@
                 ! Adjust DS BC for tributaries
                 if (converge.gt.1) then
                     y_down(converge,days) = y(int(RecSeg(converge)),int(Loca(converge)/delx(converge)),2)
-                    !y_down(converge,days) = y(int(RecSeg(converge)),int(Loca(converge)/delx(converge)),1)
                 end if  
             
                 ! Create Jacobian        
@@ -213,14 +197,12 @@
                     do r = 1,(2*N(converge)),1
                         
                         if (mod(r,2).ne.0) then
-                            !if (abs(x(r)).gt.tol_Q(converge)) then
                             if (abs(x(r)).gt.tol_Q(converge)*abs(oldQ(int((r/2)+1)))) then
                                 reach_off(r) = 1
                             else
                                 reach_off(r) = 0
                             end if
                         else          
-                            !if (abs(x(r)).gt.tol_y(converge)) then
                             if (abs(x(r)).gt.tol_y(converge)*abs(oldy(int((r/2))))) then
                                 reach_off(r) = 1
                             else
@@ -258,204 +240,23 @@
                         call JacobianInversion()
                                             
                         solv_count = solv_count + 1
-
-                        if (solv_count.gt.300) then ! was 5000
-                            if (delt.gt.(0.0000001)) then
-                                delt = 0.50*delt
-                                solv_count = 0
-                                deallocate(reach_off)
-                                deallocate(guessQ)
-                                deallocate(guessy)
-                                deallocate(oldQ)
-                                deallocate(oldy)
-                                deallocate(J)
-                                deallocate(Je)
-                                deallocate(resid)
-                                deallocate(x)
-                                deallocate(wt)
-                                do jj = segs,2,-1
-                                     qtrib(int(RecSeg(jj)),int(Loca(jj)/delx(jj)),1) = -Q(jj,N(jj),1)/delx(int(RecSeg(jj)))
-                                end do                                  
-                                print*, 'ADJUSTING TIME STEP ', delt, 'ON SEGMENT ', converge
-                                go to 2893
-                            else
-                                tol_y(converge) = 2*tol_y(converge)
-                                tol_Q(converge) = 2*tol_Q(converge)
-                                solv_count = 0
-                                iter_count = 0
-                                deallocate(reach_off)
-                                deallocate(guessQ)
-                                deallocate(guessy)
-                                deallocate(oldQ)
-                                deallocate(oldy)
-                                deallocate(J)
-                                deallocate(Je)
-                                deallocate(resid)
-                                deallocate(x)
-                                deallocate(wt)
-                                deallocate(wt_day)
-                                deallocate(Q_up)
-                                deallocate(y_down)
-                                deallocate(IC_Q)
-                                deallocate(IC_y)
-                                do jj = segs,2,-1
-                                     qtrib(int(RecSeg(jj)),int(Loca(jj)/delx(jj)),1) = -Q(jj,N(jj),1)/delx(int(RecSeg(jj)))
-                                end do                            
-                                print*, 'NAN: ADJUSTING TOLY/TOLQ ON SEGMENT ___', converge
-                            
-                                !close(101)
-                                !close(1022)
-                                !close(1023)
-                                !close(601)
-                                !pause
-                                !open(101, file = 'BC2.txt')
-                                !open (unit=1022, status="old",file="C:/Users/lukerf/EnsembleRH/EnsemblesTDRuns/lq.txt")
-                                !open (unit=1023, status="old",file="C:/Users/lukerf/EnsembleRH/EnsemblesTDRuns/ly.txt")
-                                !open (unit=601, status="old",file="C:/Users/lukerf/EnsembleRH/EnsemblesTDRuns/wt.txt")
-                            
-                                go to 2894
-                            end if
-                        end if
-                                                
-                    if (guessy(2).ne.guessy(2)) then
-                        if (delt.gt.(0.00000001)) then
-                            delt = 0.50*delt
-                            solv_count = 0
-                            deallocate(reach_off)
-                            deallocate(guessQ)
-                            deallocate(guessy)
-                            deallocate(oldQ)
-                            deallocate(oldy)
-                            deallocate(J)
-                            deallocate(Je)
-                            deallocate(resid)
-                            deallocate(x)
-                            deallocate(wt)
-                            do jj = segs,2,-1
-                                 qtrib(int(RecSeg(jj)),int(Loca(jj)/delx(jj)),1) = -Q(jj,N(jj),1)/delx(int(RecSeg(jj)))
-                            end do                            
-                            print*, 'NAN: ADJUSTING TOLY/TOLQ ON SEGMENT ', converge
-                        else
-                            solv_count = 0
-                            iter_count = 0
-                            tol_y(converge) = 2*tol_y(converge)
-                            tol_Q(converge) = 2*tol_Q(converge)
-                            deallocate(reach_off)
-                            deallocate(guessQ)
-                            deallocate(guessy)
-                            deallocate(oldQ)
-                            deallocate(oldy)
-                            deallocate(J)
-                            deallocate(Je)
-                            deallocate(resid)
-                            deallocate(x)
-                            deallocate(wt)
-                            deallocate(wt_day)
-                            deallocate(Q_up)
-                            deallocate(y_down)
-                            deallocate(IC_Q)
-                            deallocate(IC_y)
-                            do jj = segs,2,-1
-                                 qtrib(int(RecSeg(jj)),int(Loca(jj)/delx(jj)),1) = -Q(jj,N(jj),1)/delx(int(RecSeg(jj)))
-                            end do                            
-                            print*, 'NAN: ADJUSTING TOLY/TOLQ ON SEGMENT ', converge
-                            
-                                close(101)
-                                close(1022)
-                                close(1023)
-                                close(601)
-                                !close(602)
-                                !close(603)
-                                print*, 'WAITING FOR U!!!!'
-                                pause
-                                open(101, file = 'BC2.txt')
-                                open (unit=1022, status="old",file="C:/Users/lukerf/EnsembleRH/EnsemblesTDRuns/lq.txt")
-                                open (unit=1023, status="old",file="C:/Users/lukerf/EnsembleRH/EnsemblesTDRuns/ly.txt")
-                                open (unit=601, status="old",file="C:/Users/lukerf/EnsembleRH/EnsemblesTDRuns/wt.txt")
-                            
-                            go to 2894
-                        end if
-                    end if
                 end if
                     
-                end do       
-                
-                    if (guessy(2).ne.guessy(2)) then
-                        if (delt.gt.(0.0000000001)) then
-                            delt = 0.50*delt
-                            solv_count = 0
-                            deallocate(reach_off)
-                            deallocate(guessQ)
-                            deallocate(guessy)
-                            deallocate(oldQ)
-                            deallocate(oldy)
-                            deallocate(J)
-                            deallocate(Je)
-                            deallocate(resid)
-                            deallocate(x)
-                            deallocate(wt)
-                            do jj = segs,2,-1
-                                 qtrib(int(RecSeg(jj)),int(Loca(jj)/delx(jj)),1) = -Q(jj,N(jj),1)/delx(int(RecSeg(jj)))
-                            end do
-                            print*, 'NAN: ADJUSTING TIME STEP ', delt, 'ON SEGMENT ', converge
-                            go to 2893
-                        else
-                            solv_count = 0
-                            iter_count = 0
-                            tol_y(converge) = 2*tol_y(converge)
-                            tol_Q(converge) = 2*tol_Q(converge)
-                            deallocate(reach_off)
-                            deallocate(guessQ)
-                            deallocate(guessy)
-                            deallocate(oldQ)
-                            deallocate(oldy)
-                            deallocate(J)
-                            deallocate(Je)
-                            deallocate(resid)
-                            deallocate(x)
-                            deallocate(wt)
-                            deallocate(wt_day)
-                            deallocate(Q_up)
-                            deallocate(y_down)
-                            deallocate(IC_Q)
-                            deallocate(IC_y)
-                            do jj = segs,2,-1
-                                 qtrib(int(RecSeg(jj)),int(Loca(jj)/delx(jj)),1) = -Q(jj,N(jj),1)/delx(int(RecSeg(jj)))
-                            end do                            
-                            print*, 'NAN: ADJUSTING TOLY/TOLQ ON SEGMENT ', converge
-                            
-                                close(101)
-                                close(1022)
-                                close(1023)
-                                close(601)
-                                pause
-                                open(101, file = 'BC2.txt')
-                                open (unit=1022, status="old",file="C:/Users/lukerf/EnsembleRH/EnsemblesTDRuns/lq.txt")
-                                open (unit=1023, status="old",file="C:/Users/lukerf/EnsembleRH/EnsemblesTDRuns/ly.txt")
-                                open (unit=601, status="old",file="C:/Users/lukerf/EnsembleRH/EnsemblesTDRuns/wt.txt")
-                            
-                            go to 2894
-                        end if
-                    end if
-              
-                !if (converge.eq.1) then
+                end do                     
                 if (converge.lt.(segs+1)) then
                     Q(converge,:,2) = guessQ
                     y(converge,:,2) = guessy
-                    !converge = converge + 1
                     converge = converge - 1
                 else
                     if (abs(guessQ(N(converge)) - -1*qtrib(int(RecSeg(converge)),int(Loca(converge)/delx(converge)),1)* &
                         delx(int(RecSeg(converge)))).lt.tol_trib(converge)) then
                         Q(converge,:,2) = guessQ
                         y(converge,:,2) = guessy
-                        !converge = converge + 1
                         converge = converge - 1
                     else          
                         qtrib(int(RecSeg(converge)),int(Loca(converge)/delx(converge)),1) = &
                             -guessQ(N(converge))/delx(int(RecSeg(converge)))
                         last_trib = converge
-                        !converge = 1
                         converge = segs
                         iter_count = iter_count + 1
                     end if 
@@ -542,8 +343,6 @@
             
     end do
   
-    
-    
     end program TileDrainSRC
 
   
